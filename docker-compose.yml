@@ -1,0 +1,117 @@
+version: '3.7'
+services:
+#SETUP DATABASE POSTGREE
+    db:
+      container_name: db
+      #image: postgres:9.6
+      build:
+        context: postgres
+      environment:
+        POSTGRES_USERS: ${KONG_DB_USERNAME}:${KONG_DB_PASSWORD}|${KONGA_DB_USERNAME}:${KONGA_DB_PASSWORD}
+        POSTGRES_DATABASES: ${KONG_DB_NAME}:${KONG_DB_USERNAME}|${KONGA_DB_NAME}:${KONGA_DB_USERNAME}
+        #POSTGRES_PASSWORD: ${KONG_DB_SUPERPAS}|${KONG_DB_SUPERPAS}
+      healthcheck:
+        test: ["CMD", "pg_isready", "-U", "${KONG_DB_USERNAME}"]
+        interval: 30s
+        timeout: 30s
+        retries: 3
+      extra_hosts:
+        - "$DNS_LOCAL : $IP_LOCAL"
+      restart: on-failure
+      stdin_open: true
+      tty: true
+      volumes:
+        - ./persist_volume:/var/lib/postgresql/data
+      networks:
+        - kong-net
+  
+    kong-migrations:
+      container_name: kong-migrations
+      image: kong:latest
+      entrypoint: sh -c "sleep 10 && kong migrations bootstrap -v"
+      environment:
+        KONG_DATABASE: ${KONG_DATABASE}
+        KONG_PG_HOST: ${KONG_DB_HOST}
+        KONG_PG_DATABASE: ${KONG_DB_NAME}
+        KONG_PG_USER: ${KONG_DB_USERNAME}
+        KONG_PG_PASSWORD: ${KONG_DB_PASSWORD}
+      depends_on:
+        - db
+      networks:
+        - kong-net
+      restart: on-failure
+# volumes:
+#    persist_volume:
+# networks:
+#    kong-net:
+#      external: true
+
+# SETUP KONG GATEWAY
+    kong:
+      container_name: kong
+      image: kong:latest
+      environment:
+        KONG_DATABASE: ${KONG_DATABASE}
+        KONG_PG_HOST: ${KONG_DB_HOST}
+        KONG_PG_DATABASE: ${KONG_DB_NAME}
+        KONG_PG_USER: ${KONG_DB_USERNAME}
+        KONG_PG_PASSWORD: ${KONG_DB_PASSWORD}
+        KONG_PROXY_ACCESS_LOG: ${KONG_PROXY_ACCESS_LOG}
+        KONG_ADMIN_ACCESS_LOG: ${KONG_ADMIN_ACCESS_LOG}
+        KONG_PROXY_ERROR_LOG: ${KONG_PROXY_ERROR_LOG}
+        KONG_ADMIN_ERROR_LOG: ${KONG_ADMIN_ERROR_LOG}
+        KONG_ADMIN_LISTEN: ${KONG_ADMIN_LISTEN}
+      restart: on-failure
+      extra_hosts:
+        - "$DNS_LOCAL : $IP_LOCAL"
+        # - "$DNS_BACKEND : $IP_BACKEND"
+      ports:
+        - $KONG_PROXY_PORT:8000
+        - $KONG_PROXY_SSL_PORT:8443
+        - $KONG_PROXY_ADMIN_API_PORT:8001
+        - $KONG_PROXY_ADMIN_SSL_API_PORT:8444
+      networks:
+        - kong-net
+
+#SETUP KONGA
+    konga-prepare:
+      container_name: konga-prepare
+      image: pantsel/konga:latest
+      command: "-c prepare -a postgres -u postgresql://${KONG_DB_USERNAME}:${KONG_DB_PASSWORD}@db:${KONG_DB_PORT}/${KONGA_DB_NAME}"
+      networks:
+        - kong-net
+      restart: on-failure
+      depends_on:
+        - db
+
+    konga:
+      container_name: konga
+      image: pantsel/konga:latest
+      restart: always
+      networks:
+        - kong-net
+      extra_hosts:
+        - "$DNS_LOCAL : $IP_LOCAL"
+        # - "$DNS_BACKEND : $IP_BACKEND"
+      environment:
+        DB_ADAPTER: postgres
+        DB_URI: postgresql://${KONG_DB_USERNAME}:${KONG_DB_PASSWORD}@db:${KONG_DB_PORT}/${KONGA_DB_NAME}
+        NODE_ENV: production
+      volumes:
+        - ./konga-data:/var/lib/postgresql/data
+      depends_on:
+        - db
+      ports:
+        - ${KONGA_PORT}:1337
+
+volumes:
+  persist_volume:
+  konga-data:
+  #prometheus_data:
+
+networks:
+  kong-net:
+    #external: true
+
+    
+    
